@@ -1,0 +1,234 @@
+version: '3'
+
+services:
+
+    service_redis:
+        container_name: container_redis
+        image: redis:4.0.14
+        environment:
+            - TZ=Asia/Shanghai
+        ports:
+            - "6379:6379"
+        volumes:
+            - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+            - ./data/redis/:/data/
+            - ./log/redis/:/var/log/redis/
+        command: redis-server /usr/local/etc/redis/redis.conf
+        restart: always
+
+    service_mysql:
+        container_name: container_mysql
+        image: mysql:5.7
+        environment:
+            TZ: Asia/Shanghai
+            MYSQL_ROOT_PASSWORD: 123456
+            MYSQL_ROOT_HOST: '%'
+        ports:
+            - "3306:3306"
+        volumes:
+            - ./config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+            - ./init/mysql/:/docker-entrypoint-initdb.d/
+            - ./data/mysql/:/var/lib/mysql/
+            - ./log/mysql/:/var/log/mysql/
+        command: [
+            '--character-set-server=utf8mb4',
+            '--collation-server=utf8mb4_unicode_ci'
+        ]
+        restart: always
+
+    service_mongodb:
+        container_name: container_mongodb
+        image: mongo:4.0.9
+        environment:
+            TZ: Asia/Shanghai
+            MONGO_INITDB_ROOT_USERNAME: root
+            MONGO_INITDB_ROOT_PASSWORD: 123456
+        ports:
+            - "27017:27017"
+        volumes:
+            - ./init/mongodb/:/docker-entrypoint-initdb.d/
+            - ./data/mongodb/:/data/db/
+            - ./log/mongodb/:/var/log/mongodb/
+        restart: always
+
+    service_zookeeper:
+        container_name: container_zookeeper
+        image: wurstmeister/zookeeper:3.4.13
+        image: wurstmeister/zookeeper
+        environment:
+            TZ: Asia/Shanghai
+        expose:
+            - "2181"
+        volumes:
+            - ./data/zookeeper/:/opt/zookeeper-3.4.13/data/
+        restart: always
+
+    service_kafka:
+        container_name: container_kafka
+        image: wurstmeister/kafka
+        links:
+            - service_zookeeper:zoo
+        environment:
+            TZ: Asia/Shanghai
+            KAFKA_ADVERTISED_HOST_NAME: service_kafka
+            KAFKA_MESSAGE_MAX_BYTES: 2000000
+            KAFKA_ZOOKEEPER_CONNECT: zoo:2181
+            KAFKA_LOG_DIRS: "/var/log/kafka"
+        ports:
+            - "9092:9092"
+        volumes:
+            - ./log/kafka/:/var/log/kafka/
+            - /var/run/docker.sock:/var/run/docker.sock
+        depends_on:
+            - service_zookeeper
+        restart: always
+
+    service_kafka_manager:
+        container_name: container_kafka_manager
+        image: sheepkiller/kafka-manager
+        links:
+            - service_zookeeper:zoo
+            - service_kafka:kafka
+        environment:
+            TZ: Asia/Shanghai
+            ZK_HOSTS: zoo:2181
+            KAFKA_BROKERS: kafka:9092
+        ports:
+            - "9000:9000"
+        depends_on:
+            - service_zookeeper
+            - service_kafka
+        restart: always
+
+    service_registry:
+        container_name: container_registry
+        image: intomylife/osc-registry:1.0
+        environment:
+            TZ: Asia/Shanghai
+        ports:
+            - "8761:8761"
+        restart: always
+
+    service_sleuth:
+        container_name: container_sleuth
+        image: intomylife/osc-sleuth:1.0
+        links:
+            - service_registry:registry
+        environment:
+            TZ: Asia/Shanghai
+            eureka.server.host: registry
+        ports:
+            - "9411:9411"
+        depends_on:
+            - service_registry
+        restart: always
+
+    service_turbine:
+        container_name: container_turbine
+        image: intomylife/osc-turbine:1.0
+        links:
+            - service_registry:registry
+        environment:
+            TZ: Asia/Shanghai
+            eureka.server.host: registry
+        ports:
+            - "8762:8762"
+        depends_on:
+            - service_registry
+        restart: always
+
+    service_gateway:
+        container_name: container_gateway
+        image: intomylife/osc-gateway:1.0
+        links:
+            - service_registry:registry
+            - service_sleuth:sleuth
+        environment:
+            TZ: Asia/Shanghai
+            spring.redis.host: service_redis
+            eureka.server.host: registry
+            spring.zipkin.host: sleuth
+        ports:
+            - "8000:8000"
+        depends_on:
+            - service_redis
+            - service_registry
+            - service_sleuth
+        restart: always
+
+    service_base:
+        container_name: container_base
+        image: intomylife/osc-base:1.0
+        links:
+            - service_registry:registry
+            - service_sleuth:sleuth
+            - service_kafka:kafka
+        environment:
+            TZ: Asia/Shanghai
+            spring.redis.host: service_redis
+            spring.datasource.host: service_mysql
+            spring.data.mongodb.host: service_mongodb
+            eureka.server.host: registry
+            spring.zipkin.host: sleuth
+            spring.kafka.host: kafka
+        ports:
+            - "8080:8080"
+        depends_on:
+            - service_redis
+            - service_mysql
+            - service_mongodb
+            - service_registry
+            - service_sleuth
+            - service_turbine
+            - service_kafka
+        restart: always
+
+    service_log:
+        container_name: container_log
+        image: intomylife/osc-log:1.0
+        links:
+            - service_registry:registry
+            - service_sleuth:sleuth
+            - service_kafka:kafka
+        environment:
+            TZ: Asia/Shanghai
+            spring.redis.host: service_redis
+            spring.datasource.host: service_mysql
+            spring.data.mongodb.host: service_mongodb
+            eureka.server.host: registry
+            spring.zipkin.host: sleuth
+            spring.kafka.host: kafka
+        expose:
+            - "8081"
+        depends_on:
+            - service_redis
+            - service_mysql
+            - service_mongodb
+            - service_registry
+            - service_sleuth
+            - service_turbine
+            - service_kafka
+        restart: always
+
+    service_vue:
+        container_name: container_vue
+        image: intomylife/osc-front:1.0
+        environment:
+            - TZ=Asia/Shanghai
+        volumes:
+            - ./data/nginx/:/app/dist/
+
+    service_nginx:
+        container_name: container_nginx
+        image: nginx:1.8
+        environment:
+            - TZ=Asia/Shanghai
+        ports:
+            - "9527:9527"
+        volumes:
+            - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf
+            - ./data/nginx/:/usr/share/nginx/html/
+            - ./log/nginx/:/var/log/nginx/
+        depends_on:
+            - service_vue
+        restart: always
