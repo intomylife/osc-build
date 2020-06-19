@@ -149,8 +149,8 @@ services:
             spring.redis.host: service_redis
             eureka.server.host: registry
             spring.zipkin.host: sleuth
-        expose:
-            - "8000"
+        ports:
+            - "8000:8000"
         depends_on:
             - service_redis
             - service_registry
